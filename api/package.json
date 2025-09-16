@@ -10,7 +10,6 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "youtubei.js": "^15.1.1",
-    "ytdl-core": "^4.11.5"
+    "youtubei.js": "^15.1.1"
   }
 }

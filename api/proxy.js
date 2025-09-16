@@ -1,10 +1,5 @@
-// api/proxy.js
-import { YouTube } from 'youtube.js';
-import fetch from 'node-fetch';
-
-export const config = {
-  runtime: 'nodejs', // YouTube.js needs Node runtime
-};
+import { Innertube } from 'youtubei.js';
+import { Readable } from 'stream';
 
 export default async function handler(req, res) {
   const targetUrl = req.query.url;
@@ -14,39 +9,36 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Initialize YouTube.js
-    const youtube = new YouTube();
+    const youtube = await Innertube.create();
+    const info = await youtube.getInfo(targetUrl);
 
-    // Get video info
-    const video = await youtube.getVideo(targetUrl);
+    // 1. Filter for formats that have video, audio, and are mp4
+    const suitableFormats = info.formats.filter(format => 
+      format.has_video && 
+      format.has_audio && 
+      format.container === 'mp4'
+    );
 
-    // Pick an MP4 format with both audio & video
-    const format = video.formats.find(f => f.mimeType.includes('video/mp4') && f.hasAudio === true);
-
-    if (!format || !format.url) {
-      return res.status(404).send('No suitable video format found.');
+    if (suitableFormats.length === 0) {
+      throw new Error("Could not find a suitable MP4 format with both video and audio.");
     }
 
-    // Fetch the video stream via node-fetch
-    const videoResponse = await fetch(format.url, {
-      headers: {
-        'User-Agent': req.headers['user-agent'] || 'Mozilla/5.0',
-      },
+    // 2. From the suitable formats, find the one with the highest resolution (height)
+    const bestFormat = suitableFormats.reduce((prev, current) => {
+      return (prev.height > current.height) ? prev : current;
     });
+    
+    // 3. Get the stream for the best format found
+    const stream = await bestFormat.getStream();
 
-    if (!videoResponse.ok) {
-      return res.status(videoResponse.status).send(`Failed to fetch video: ${videoResponse.statusText}`);
-    }
-
-    // Set response headers for streaming
     res.setHeader('Content-Type', 'video/mp4');
-    res.setHeader('Content-Disposition', 'inline; filename="video.mp4"');
-
-    // Pipe the video stream to the client
-    videoResponse.body.pipe(res);
+    
+    // Convert the web stream to a Node.js stream and pipe it to the response
+    const nodeStream = Readable.fromWeb(stream);
+    nodeStream.pipe(res);
 
   } catch (error) {
     console.error(error);
-    res.status(500).send(`Error fetching YouTube video: ${error.message}`);
+    res.status(500).send(`Error in proxy function: ${error.message}`);
   }
 }
