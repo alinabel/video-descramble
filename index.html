@@ -270,4 +270,31 @@
 
         function findBlockForFrame(frameNumber) {
             for (const block of metadata.permutation_blocks) {
-                if (frameNumber >= block.start_frame && frameNumber <= block.end_frame)
+                if (frameNumber >= block.start_frame && frameNumber <= block.end_frame) {
+                    return block;
+                }
+            }
+            return metadata.permutation_blocks[metadata.permutation_blocks.length - 1];
+        }
+        
+        function reverseShiftPixels(ctx, shift_x, shift_y) {
+            const w = ctx.canvas.width;
+            const h = ctx.canvas.height;
+            const negShiftX = -shift_x;
+            const negShiftY = -shift_y;
+            const sx = ((negShiftX % w) + w) % w;
+            const sy = ((negShiftY % h) + h) % h;
+            if (sx === 0 && sy === 0) return;
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = w;
+            tempCanvas.height = h;
+            tempCanvas.getContext('2d').drawImage(ctx.canvas, 0, 0);
+            ctx.clearRect(0, 0, w, h);
+            ctx.drawImage(tempCanvas, w - sx, h - sy, sx, sy, 0, 0, sx, sy);
+            ctx.drawImage(tempCanvas, 0, h - sy, w - sx, sy, sx, 0, w - sx, sy);
+            ctx.drawImage(tempCanvas, w - sx, 0, sx, h - sy, 0, sy, sx, h - sy);
+            ctx.drawImage(tempCanvas, 0, 0, w - sx, h - sy, sx, sy, w - sx, h - sy);
+        }
+    </script>
+</body>
+</html>
