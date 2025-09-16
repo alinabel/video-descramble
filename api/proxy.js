@@ -1,5 +1,4 @@
-import { Innertube } from 'youtubei.js';
-import { Readable } from 'stream';
+import { Readable } from 'node:stream';
 
 export default async function handler(req, res) {
   const targetUrl = req.query.url;
@@ -9,10 +8,13 @@ export default async function handler(req, res) {
   }
 
   try {
+    // 1. Dynamically import the ESM youtubei.js library
+    const { Innertube } = await import('youtubei.js');
+    
     const youtube = await Innertube.create();
     const info = await youtube.getInfo(targetUrl);
 
-    // 1. Filter for formats that have video, audio, and are mp4
+    // Filter for formats that have video, audio, and are mp4
     const suitableFormats = info.formats.filter(format => 
       format.has_video && 
       format.has_audio && 
@@ -23,12 +25,12 @@ export default async function handler(req, res) {
       throw new Error("Could not find a suitable MP4 format with both video and audio.");
     }
 
-    // 2. From the suitable formats, find the one with the highest resolution (height)
+    // From the suitable formats, find the one with the highest resolution (height)
     const bestFormat = suitableFormats.reduce((prev, current) => {
       return (prev.height > current.height) ? prev : current;
     });
     
-    // 3. Get the stream for the best format found
+    // Get the stream for the best format found
     const stream = await bestFormat.getStream();
 
     res.setHeader('Content-Type', 'video/mp4');
