@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Client-Side Video Descrambler</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #1a1a1a;
+            color: #e0e0e0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 2rem;
+            margin: 0;
+        }
+        h1 {
+            color: #0070f3; /* Vercel Blue */
+        }
+        .container {
+            background-color: #2c2c2c;
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+            width: 90%;
+            max-width: 800px;
+        }
+        .input-group {
+            margin-bottom: 1.5rem;
+        }
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: bold;
+        }
+        input[type="text"], input[type="file"] {
+            width: 100%;
+            padding: 0.75rem;
+            border-radius: 6px;
+            border: 1px solid #555;
+            background-color: #333;
+            color: #e0e0e0;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #0070f3;
+            color: white;
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 1rem;
+            width: 100%;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #005bb5;
+        }
+        button:disabled {
+            background-color: #555;
+            cursor: not-allowed;
+        }
+        .video-container {
+            margin-top: 2rem;
+            text-align: center;
+        }
+        #outputCanvas {
+            border: 2px solid #444;
+            background-color: #000;
+            max-width: 100%;
+            border-radius: 8px;
+        }
+        .status {
+            margin-top: 1rem;
+            font-style: italic;
+            color: #aaa;
+            height: 20px;
+        }
+        #sourceVideo, #processingCanvas, #tileCanvas {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>🎬 Client-Side Video Descrambler</h1>
+        
+        <div class="input-group">
+            <label for="videoUrl">Scrambled Video URL (e.g., from Google Video):</label>
+            <input type="text" id="videoUrl" placeholder="https://rr1---sn-4wg7lnel.googlevideo.com/videoplayback?..." >
+        </div>
+
+        <div class="input-group">
+            <label for="metadataFile">Metadata JSON File:</label>
+            <input type="file" id="metadataFile" accept=".json">
+        </div>
+
+        <button id="startButton">Descramble Video</button>
+
+        <div class="status" id="statusLabel">Ready to start.</div>
+
+        <div class="video-container">
+            <h3>Descrambled Output:</h3>
+            <canvas id="outputCanvas" width="640" height="360"></canvas>
+        </div>
+    </div>
+
+    <video id="sourceVideo" muted playsinline></video>
+    <canvas id="processingCanvas"></canvas>
+    <canvas id="tileCanvas"></canvas>
+
+    <script>
+        const videoUrlInput = document.getElementById('videoUrl');
+        const metadataFileInput = document.getElementById('metadataFile');
+        const startButton = document.getElementById('startButton');
+        const statusLabel = document.getElementById('statusLabel');
+        
+        const sourceVideo = document.getElementById('sourceVideo');
+        const outputCanvas = document.getElementById('outputCanvas');
+        const processingCanvas = document.getElementById('processingCanvas');
+        const tileCanvas = document.getElementById('tileCanvas');
+
+        const outputCtx = outputCanvas.getContext('2d');
+        const processingCtx = processingCanvas.getContext('2d');
+        const tileCtx = tileCanvas.getContext('2d');
+        
+        let metadata = null;
+        let animationFrameId = null;
+
+        startButton.addEventListener('click', async () => {
+            const targetUrl = videoUrlInput.value;
+            const metadataFile = metadataFileInput.files[0];
+
+            if (!targetUrl || !metadataFile) {
+                alert('Please provide both a video URL and a metadata file.');
+                return;
+            }
+
+            // ===================================================================
+            // IMPORTANT: REPLACE THE URL BELOW WITH YOUR ACTUAL VERCEL DEPLOYMENT URL
+            // ===================================================================
+            const vercelProxyUrl = "https://YOUR_PROJECT_NAME.vercel.app/api/proxy";
+            const videoUrl = `${vercelProxyUrl}?url=${encodeURIComponent(targetUrl)}`;
+            
+            console.log("Using proxy URL:", videoUrl);
+
+
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+                sourceVideo.pause();
+            }
+
+            startButton.disabled = true;
+            statusLabel.textContent = 'Loading metadata...';
+
+            try {
+                metadata = await loadMetadata(metadataFile);
+                statusLabel.textContent = 'Loading video via proxy...';
+                await loadVideo(videoUrl);
+                startDescrambling();
+            } catch (error) {
+                statusLabel.textContent = `Error: ${error.message}`;
+                alert(`An error occurred: ${error.message}`);
+            } finally {
+                startButton.disabled = false;
+            }
+        });
+
+        function loadMetadata(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    try {
+                        const data = JSON.parse(event.target.result);
+                        resolve(data);
+                    } catch (e) {
+                        reject(new Error('Failed to parse metadata JSON.'));
+                    }
+                };
+                reader.onerror = () => reject(new Error('Failed to read metadata file.'));
+                reader.readAsText(file);
+            });
+        }
+
+        function loadVideo(url) {
+            return new Promise((resolve, reject) => {
+                sourceVideo.src = url;
+                sourceVideo.crossOrigin = "Anonymous";
+                
+                sourceVideo.onloadedmetadata = () => {
+                    const originalWidth = metadata.video_info.width;
+                    const originalHeight = metadata.video_info.height;
+                    
+                    outputCanvas.width = originalWidth;
+                    outputCanvas.height = originalHeight;
+                    processingCanvas.width = sourceVideo.videoWidth;
+                    processingCanvas.height = sourceVideo.videoHeight;
+                    
+                    resolve();
+                };
+                sourceVideo.onerror = () => reject(new Error('Failed to load video. Check proxy and URL.'));
+            });
+        }
+        
+        function startDescrambling() {
+            const qrDuration = metadata.config.QR_CODE_DURATION_SECONDS || 5;
+            sourceVideo.currentTime = qrDuration;
+            
+            statusLabel.textContent = 'Playing descrambled video...';
+            sourceVideo.play();
+            
+            animationFrameId = requestAnimationFrame(processFrame);
+        }
+        
+        function processFrame() {
+            if (sourceVideo.paused || sourceVideo.ended) {
+                statusLabel.textContent = 'Playback finished.';
+                return;
+            }
+
+            processingCtx.drawImage(sourceVideo, 0, 0, processingCanvas.width, processingCanvas.height);
+            descrambleFrame();
+            animationFrameId = requestAnimationFrame(processFrame);
+        }
+        
+        function descrambleFrame() {
+            const frameNumber = Math.floor((sourceVideo.currentTime - (metadata.config.QR_CODE_DURATION_SECONDS || 5)) * metadata.video_info.fps);
+            const block = findBlockForFrame(frameNumber);
+            if (!block) return;
+
+            const gridWidth = metadata.config.grid_size[0];
+            const gridHeight = metadata.config.grid_size[1];
+            const tilePermutation = block.tile_permutation;
+            
+            const scrambledTileWidth = processingCanvas.width / gridWidth;
+            const scrambledTileHeight = processingCanvas.height / gridHeight;
+            const originalTileWidth = outputCanvas.width / gridWidth;
+            const originalTileHeight = outputCanvas.height / gridHeight;
+            
+            outputCtx.clearRect(0, 0, outputCanvas.width, outputCanvas.height);
+
+            for (let originalIndex = 0; originalIndex < tilePermutation.length; originalIndex++) {
+                const scrambledIndex = tilePermutation[originalIndex];
+                const scrambledCol = scrambledIndex % gridWidth;
+                const scrambledRow = Math.floor(scrambledIndex / gridWidth);
+                const sx = scrambledCol * scrambledTileWidth;
+                const sy = scrambledRow * scrambledTileHeight;
+
+                const originalCol = originalIndex % gridWidth;
+                const originalRow = Math.floor(originalIndex / gridWidth);
+                const dx = originalCol * originalTileWidth;
+                const dy = originalRow * originalTileHeight;
+
+                let sourceCanvasForTile = processingCanvas;
+                const visualEffect = block.visual_effect;
+
+                if (visualEffect && visualEffect.type === 'shift_pixels') {
+                    tileCanvas.width = scrambledTileWidth;
+                    tileCanvas.height = scrambledTileHeight;
+                    tileCtx.drawImage(processingCanvas, sx, sy, scrambledTileWidth, scrambledTileHeight, 0, 0, scrambledTileWidth, scrambledTileHeight);
+                    reverseShiftPixels(tileCtx, visualEffect.shift_x, visualEffect.shift_y);
+                    sourceCanvasForTile = tileCanvas;
+                }
+
+                outputCtx.drawImage(sourceCanvasForTile, sourceCanvasForTile === tileCanvas ? 0 : sx, sourceCanvasForTile === tileCanvas ? 0 : sy, scrambledTileWidth, scrambledTileHeight, dx, dy, originalTileWidth, originalTileHeight);
+            }
+        }
+
+        function findBlockForFrame(frameNumber) {
+            for (const block of metadata.permutation_blocks) {
+                if (frameNumber >= block.start_frame && frameNumber <= block.end_frame)
