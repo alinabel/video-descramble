@@ -75,7 +75,15 @@
             margin-top: 1rem;
             font-style: italic;
             color: #aaa;
-            height: 20px;
+            min-height: 20px;
+        }
+        .status.error {
+            color: #ff6b6b;
+            font-style: normal;
+            font-weight: bold;
+        }
+        input.input-error {
+            border-color: #ff6b6b;
         }
         #sourceVideo, #processingCanvas, #tileCanvas {
             display: none;
@@ -99,7 +107,7 @@
 
         <button id="startButton">Descramble Video</button>
 
-        <div class="status" id="statusLabel">Ready to start.</div>
+        <div class="status" id="statusLabel" role="status">Ready to start.</div>
 
         <div class="video-container">
             <h3>Descrambled Output:</h3>
@@ -129,12 +137,29 @@
         let metadata = null;
         let animationFrameId = null;
 
+        function setStatus(message, isError = false) {
+            statusLabel.textContent = message;
+            statusLabel.classList.toggle('error', isError);
+        }
+
+        videoUrlInput.addEventListener('input', () => videoUrlInput.classList.remove('input-error'));
+        metadataFileInput.addEventListener('change', () => metadataFileInput.classList.remove('input-error'));
+
         startButton.addEventListener('click', async () => {
             const targetUrl = videoUrlInput.value;
             const metadataFile = metadataFileInput.files[0];
 
-            if (!targetUrl || !metadataFile) {
-                alert('Please provide both a video URL and a metadata file.');
+            const missing = [];
+            if (!targetUrl) {
+                missing.push('a video URL');
+                videoUrlInput.classList.add('input-error');
+            }
+            if (!metadataFile) {
+                missing.push('a metadata JSON file');
+                metadataFileInput.classList.add('input-error');
+            }
+            if (missing.length > 0) {
+                setStatus(`Please provide ${missing.join(' and ')}.`, true);
                 return;
             }
 
@@ -153,16 +178,15 @@
             }
 
             startButton.disabled = true;
-            statusLabel.textContent = 'Loading metadata...';
+            setStatus('Loading metadata...');
 
             try {
                 metadata = await loadMetadata(metadataFile);
-                statusLabel.textContent = 'Loading video via proxy...';
+                setStatus('Loading video via proxy...');
                 await loadVideo(videoUrl);
                 startDescrambling();
             } catch (error) {
-                statusLabel.textContent = `Error: ${error.message}`;
-                alert(`An error occurred: ${error.message}`);
+                setStatus(`Error: ${error.message}`, true);
             } finally {
                 startButton.disabled = false;
             }
@@ -174,6 +198,11 @@
                 reader.onload = (event) => {
                     try {
                         const data = JSON.parse(event.target.result);
+                        if (!data.video_info || !data.config || !Array.isArray(data.permutation_blocks) ||
+                            !data.video_info.width || !data.video_info.height || !data.video_info.fps) {
+                            reject(new Error('Metadata file is missing required fields (video_info, config, permutation_blocks).'));
+                            return;
+                        }
                         resolve(data);
                     } catch (e) {
                         reject(new Error('Failed to parse metadata JSON.'));
@@ -186,8 +215,8 @@
 
         function loadVideo(url) {
             return new Promise((resolve, reject) => {
-                sourceVideo.src = url;
                 sourceVideo.crossOrigin = "Anonymous";
+                sourceVideo.src = url;
                 
                 sourceVideo.onloadedmetadata = () => {
                     const originalWidth = metadata.video_info.width;
@@ -208,15 +237,15 @@
             const qrDuration = metadata.config.QR_CODE_DURATION_SECONDS || 5;
             sourceVideo.currentTime = qrDuration;
             
-            statusLabel.textContent = 'Playing descrambled video...';
-            sourceVideo.play();
+            setStatus('Playing descrambled video...');
+            sourceVideo.play().catch((error) => setStatus(`Error: ${error.message}`, true));
             
             animationFrameId = requestAnimationFrame(processFrame);
         }
         
         function processFrame() {
             if (sourceVideo.paused || sourceVideo.ended) {
-                statusLabel.textContent = 'Playback finished.';
+                setStatus('Playback finished.');
                 return;
             }
 
